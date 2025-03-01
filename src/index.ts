@@ -116,45 +116,50 @@ app.delete('/medicamentos/:id', async (req: Request, res: Response) => {
 app.post('/medicamentos/:id/reserve', async (req: Request, res: Response) => {
     const { id } = req.params;
     const idInt = parseInt(id);
-    const { client, quantity } = req.body;
-
     try {
-
-        const result = ReserveSchema.safeParse({ client, quantity });
-        if (!result.success) {
-            res.status(400).json({ message: 'Dados inválidos.' });
-            return;
-        }
-
-        // medicamento já reservado
-        const reservadoCliente = await prisma.reservedBy.findFirst({where: client}) 
-        if (reservadoCliente) {
-            res.status(400).json({ message: 'Você já fez uma reserva.' });
-            return;
-        }
-
-        const medicamento = await prisma.medicamento.findFirst({ where: { id: idInt } });
-        if (!medicamento) {
-            res.status(400).json({ message: 'Não foi possível encontrar o medicamento.' });
-            return;
-        }
-
-        const estoqueAtual = Number(medicamento?.stock) - quantity;
-
-        if(estoqueAtual < 0){
-            res.status(200).json({ message: 'Estoque esgotado.' })
-            return;
-        }
-        const reservarMedicamento = await prisma.medicamento.update({ where: { id: idInt }, data: { stock: estoqueAtual } });
-
-        const reservado = await prisma.reservedBy.create({ data: { client, quantity } });
-
-        res.status(200).json({ message: `Medicamento reservado por ${client}.`, estoque: estoqueAtual });
-
+      const result = ReserveSchema.safeParse(req.body);
+      if (!result.success) {
+        res.status(400).json({ message: 'Dados inválidos.', errors: result.error.flatten() });
+        return;
+      }
+      const { client, quantity } = result.data;
+  
+      const reservadoCliente = await prisma.reservedBy.findFirst({ where: { client } });
+      if (reservadoCliente) {
+        res.status(400).json({ message: 'Você já fez uma reserva.' });
+        return;
+      }
+  
+      const medicamento = await prisma.medicamento.findUnique({ where: { id: idInt } });
+      if (!medicamento) {
+        res.status(404).json({ message: 'Medicamento não encontrado.' });
+        return;
+      }
+  
+      const estoqueAtual = medicamento.stock - quantity;
+      if (estoqueAtual < 0) {
+        res.status(400).json({ message: 'Estoque insuficiente para reserva.' });
+        return;
+      }
+  
+      const reservarMedicamento = await prisma.medicamento.update({
+        where: { id: idInt },
+        data: { stock: estoqueAtual },
+      });
+  
+      const reservado = await prisma.reservedBy.create({
+        data: { client, quantity },
+      });
+  
+      res.status(200).json({ message: `Medicamento reservado por ${client}.`, data: reservarMedicamento });
     } catch (err) {
-        res.status(500).json({ message: 'Erro no servidor.', err });
+      if (err.code === 'P2025') {
+        res.status(404).json({ message: 'Medicamento não encontrado.' });
+      } else {
+        res.status(500).json({ message: 'Erro no servidor.', error: err.message });
+      }
     }
-})
+  });
 
 
 app.listen(port, () => {
